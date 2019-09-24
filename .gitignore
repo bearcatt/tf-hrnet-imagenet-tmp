@@ -1,0 +1,8 @@
+# ide cfg
+.idea
+.vscode
+
+# data & result dir
+__pycache__/
+dataset/
+checkpoints/
