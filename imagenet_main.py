@@ -748,8 +748,7 @@ if __name__ == "__main__":
     name="data_dir", short_name="dd", default="dataset",
     help="The location of the input data.")
   tf.flags.DEFINE_integer(
-    name="datasets_num_private_threads",
-    default=8,
+    name="datasets_num_private_threads", default=8,
     help="Number of threads for a private threadpool created for all"
          "datasets computation.")
   tf.flags.DEFINE_boolean(
