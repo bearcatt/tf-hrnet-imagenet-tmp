@@ -379,8 +379,8 @@ def learning_rate_with_decay(batch_size, batch_denom, num_images,
 def hrnet_model_fn(features, labels, mode, model_class,
                    hrnet_size, weight_decay, learning_rate_fn,
                    momentum, data_format, loss_scale,
-                   loss_filter_fn=None, dtype=hrnet_model.DEFAULT_DTYPE,
-                   fine_tune=False, label_smoothing=0.0):
+                   loss_filter_fn=None, dtype=tf.float32,
+                   label_smoothing=0.0):
   """Shared functionality for different hrnet model_fns.
 
   Initializes the HRNetModel representing the model layers
@@ -411,7 +411,6 @@ def hrnet_model_fn(features, labels, mode, model_class,
       otherwise. If None, batch_normalization variables will be excluded
       from the loss.
     dtype: the TensorFlow dtype to use for calculations.
-    fine_tune: If True only train the dense layers(final layers).
     label_smoothing: If greater than 0 then smooth the labels.
 
   Returns:
@@ -419,32 +418,20 @@ def hrnet_model_fn(features, labels, mode, model_class,
     current mode.
   """
 
-  # Generate a summary node for the images
-  tf.compat.v1.summary.image('images', features, max_outputs=6)
   # Checks that features/images have same data type being used for calculations.
   assert features.dtype == dtype
 
-  model = model_class(hrnet_size, data_format, dtype=dtype)
+  model = model_class(hrnet_size, data_format)
   logits = model(features, mode == tf.estimator.ModeKeys.TRAIN)
 
   # This acts as a no-op if the logits are already in fp32 (provided logits are
   # not a SparseTensor). If dtype is low precision, logits must be cast to
   # fp32 for numerical stability.
   logits = tf.cast(logits, tf.float32)
-
   predictions = {
     'classes': tf.argmax(input=logits, axis=1),
     'probabilities': tf.nn.softmax(logits, name='softmax_tensor')
   }
-
-  if mode == tf.estimator.ModeKeys.PREDICT:
-    # Return the predictions and the specification for serving a SavedModel
-    return tf.estimator.EstimatorSpec(
-      mode=mode,
-      predictions=predictions,
-      export_outputs={
-        'predict': tf.estimator.export.PredictOutput(predictions)
-      })
 
   # Calculate loss, which includes softmax cross entropy and L2 regularization.
   if label_smoothing != 0.0:
@@ -496,26 +483,11 @@ def hrnet_model_fn(features, labels, mode, model_class,
         tf.compat.v1.train.experimental.enable_mixed_precision_graph_rewrite(
           optimizer, loss_scale=loss_scale))
 
-    def _dense_grad_filter(gvs):
-      """Only apply gradient updates to the final layer.
-
-      This function is used for fine tuning.
-
-      Args:
-        gvs: list of tuples with gradients and variable info
-      Returns:
-        filtered gradients so that only the dense layer remains
-      """
-      return [(g, v) for g, v in gvs if 'dense' in v.name]
-
     if loss_scale != 1 and fp16_implementation != 'graph_rewrite':
       # When computing fp16 gradients, often intermediate tensor values are
       # so small, they underflow to 0. To avoid this, we multiply the loss by
       # loss_scale to make these tensor values loss_scale times bigger.
       scaled_grad_vars = optimizer.compute_gradients(loss * loss_scale)
-
-      if fine_tune:
-        scaled_grad_vars = _dense_grad_filter(scaled_grad_vars)
 
       # Once the gradient computation is complete we can scale the gradients
       # back to the correct scale before passing them to the optimizer.
@@ -524,8 +496,6 @@ def hrnet_model_fn(features, labels, mode, model_class,
       minimize_op = optimizer.apply_gradients(unscaled_grad_vars, global_step)
     else:
       grad_vars = optimizer.compute_gradients(loss)
-      if fine_tune:
-        grad_vars = _dense_grad_filter(grad_vars)
       minimize_op = optimizer.apply_gradients(grad_vars, global_step)
 
     update_ops = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.UPDATE_OPS)
@@ -552,20 +522,11 @@ def hrnet_model_fn(features, labels, mode, model_class,
 def imagenet_model_fn(features, labels, mode, params):
   """Our model_fn for HRNet to be used with our Estimator."""
 
-  # Warmup and higher lr may not be valid for fine tuning with small batches
-  # and smaller numbers of training images.
-  if params['fine_tune']:
-    warmup = False
-    base_lr = .1
-  else:
-    warmup = True
-    base_lr = .128
-
   learning_rate_fn = learning_rate_with_decay(
     batch_size=params['batch_size'] * params.get('num_workers', 1),
     batch_denom=256, num_images=NUM_IMAGES['train'],
     boundary_epochs=[30, 60, 80, 90], decay_rates=[1, 0.1, 0.01, 0.001, 1e-4],
-    warmup=warmup, base_lr=base_lr)
+    warmup=True, base_lr=.128)
 
   return hrnet_model_fn(
     features=features,
@@ -580,7 +541,6 @@ def imagenet_model_fn(features, labels, mode, params):
     loss_scale=params['loss_scale'],
     loss_filter_fn=None,
     dtype=params['dtype'],
-    fine_tune=params['fine_tune'],
     label_smoothing=FLAGS.label_smoothing
   )
 
@@ -614,21 +574,24 @@ def hrnet_main(model_function, input_function):
     all_reduce_alg=FLAGS.all_reduce_alg,
     num_packs=FLAGS.num_packs)
 
-  # Creates a `RunConfig` that checkpoints every half an hour which essentially
-  # results in checkpoints determined only by `epochs_between_evals`.
+  # Creates a `RunConfig` that checkpoints every half an hour.
   run_config = tf.estimator.RunConfig(
     train_distribute=distribution_strategy,
     session_config=session_config,
     save_checkpoints_secs=60 * 30,
     save_checkpoints_steps=None)
 
-  # Initializes model with all but the dense layer from pretrained ResNet.
+  # Initializes from pretrained model.
   if FLAGS.pretrained_model_checkpoint_path is not None:
     warm_start_settings = tf.estimator.WarmStartSettings(
-      FLAGS.pretrained_model_checkpoint_path,
-      vars_to_warm_start='^(?!.*dense)')
+      FLAGS.pretrained_model_checkpoint_path)
   else:
     warm_start_settings = None
+
+  if FLAGS.dtype == 'fp32':
+    dtype = tf.float32
+  elif FLAGS.dtype == 'fp316':
+    dtype = tf.float16
 
   classifier = tf.estimator.Estimator(
     model_fn=model_function, model_dir=FLAGS.model_dir, config=run_config,
@@ -637,8 +600,7 @@ def hrnet_main(model_function, input_function):
       'data_format': FLAGS.data_format,
       'batch_size': FLAGS.batch_size,
       'loss_scale': FLAGS.loss_scale,
-      'dtype': FLAGS.dtype,
-      'fine_tune': FLAGS.fine_tune,
+      'dtype': dtype,
       'num_workers': num_workers,
     })
 
@@ -649,7 +611,7 @@ def hrnet_main(model_function, input_function):
       batch_size=distribution_utils.per_replica_batch_size(
         FLAGS.batch_size, FLAGS.num_gpus),
       num_epochs=num_epochs,
-      dtype=FLAGS.dtype,
+      dtype=dtype,
       datasets_num_private_threads=FLAGS.datasets_num_private_threads,
       input_context=input_context)
 
@@ -660,47 +622,23 @@ def hrnet_main(model_function, input_function):
       batch_size=distribution_utils.per_replica_batch_size(
         FLAGS.batch_size, FLAGS.num_gpus),
       num_epochs=1,
-      dtype=FLAGS.dtype)
+      dtype=dtype)
 
-  train_epochs = (0 if FLAGS.eval_only or not FLAGS.train_epochs else
-                  FLAGS.train_epochs)
-
-  if train_epochs == 0:
-    # If --eval_only is set, perform a single loop with zero train epochs.
-    schedule, n_loops = [0], 1
-  else:
-    n_loops = math.ceil(train_epochs / FLAGS.epochs_between_evals)
-    schedule = [FLAGS.epochs_between_evals for _ in range(int(n_loops))]
-    schedule[-1] = train_epochs - sum(schedule[:-1])  # over counting.
-
-  for cycle_index, num_train_epochs in enumerate(schedule):
-    tf.compat.v1.logging.info('Starting cycle: %d/%d', cycle_index,
-                              int(n_loops))
-    if num_train_epochs:
-      classifier.train(
-        input_fn=lambda input_context=None: input_fn_train(
-          num_train_epochs, input_context=input_context),
-        max_steps=FLAGS.max_train_steps)
-
+  if FLAGS.eval_only or not FLAGS.train_epochs:
     tf.compat.v1.logging.info('Starting to evaluate.')
-    eval_results = classifier.evaluate(input_fn=input_fn_eval,
-                                       steps=FLAGS.max_train_steps)
+    eval_results = classifier.evaluate(input_fn=input_fn_eval)
+
     # TODO: put it into logs
     print(eval_results)
+  else:
+    tf.compat.v1.logging.info('Starting to train.')
+    classifier.train(
+      input_fn=lambda input_context=None: input_fn_train(
+        FLAGS.train_epochs, input_context=input_context))
 
 
 if __name__ == "__main__":
   FLAGS = tf.app.flags.FLAGS
-
-  # TODO: test
-  # tf.flags.DEFINE_enum(
-  #     name='fp16_implementation', default='casting',
-  #     enum_values=('casting', 'graph_rewrite'),
-  #     help="When --dtype=fp16, how fp16 should be implemented. This has no "
-  #          "impact on correctness. 'casting' will cause manual tf.casts to "
-  #          "be inserted in the model. 'graph_rewrite' means "
-  #          "tf.train.experimental.enable_mixed_precision_graph_rewrite will "
-  #          "be used to automatically use fp16 without any manual casts.")
 
   tf.flags.DEFINE_float(
     name='weight_decay', default=1e-4,
@@ -771,7 +709,7 @@ if __name__ == "__main__":
          "will be chosen automatically based on whether TensorFlow was "
          "built for CPU or GPU.")
   tf.flags.DEFINE_integer(
-    name='batch_size', short_name='bs', default=32,
+    name='batch_size', short_name='bs', default=256,
     help="Batch size for training and evaluation. When using "
          "multiple gpus, this is the global batch size for "
          "all devices. For example, if the batch size is 32 "
@@ -793,15 +731,15 @@ if __name__ == "__main__":
     help="The TensorFlow datatype used for calculations. "
          "Variables may be cast to a higher precision on a "
          "case-by-case basis for numerical stability.")
-  tf.flags.DEFINE_bool(
-    name='fine_tune', short_name='ft', default=False,
-    help="If True do not train any parameters except for the final layer.")
-  tf.flags.DEFINE_integer(
-    name="max_train_steps", short_name="mts", default=None,
-    help="The model will stop training if the global_step reaches this "
-         "value. If not set, training will run until the specified number "
-         "of epochs have run as usual. It is generally recommended to set "
-         "--train_epochs=1 when using this flag.")
+  # TODO: test
+  tf.flags.DEFINE_enum(
+      name='fp16_implementation', default='None',
+      enum_values=('casting', 'graph_rewrite', 'None'),
+      help="When --dtype=fp16, how fp16 should be implemented. This has no "
+           "impact on correctness. 'casting' will cause manual tf.casts to "
+           "be inserted in the model. 'graph_rewrite' means "
+           "tf.train.experimental.enable_mixed_precision_graph_rewrite will "
+           "be used to automatically use fp16 without any manual casts.")
   tf.flags.DEFINE_integer(
     name="train_epochs", short_name="te", default=100,
     help="The number of epochs used to train.")
@@ -817,9 +755,5 @@ if __name__ == "__main__":
     name='eval_only', default=False,
     help="Skip training and only perform evaluation on "
          "the latest checkpoint.")
-  tf.flags.DEFINE_integer(
-    name="epochs_between_evals", short_name="ebe", default=1,
-    help="The number of training epochs to run between "
-         "evaluations.")
 
   tf.app.run(hrnet_main(imagenet_model_fn, input_fn))
