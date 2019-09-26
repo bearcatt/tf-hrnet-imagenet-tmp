@@ -302,7 +302,7 @@ def high_resolution_module(inputs, num_branches, num_inchannels,
       The fused output.
     """
     shortcut = inputs[out_index]
-    if data_format == 'channel_first':
+    if data_format == 'channels_first':
       _, _, out_h, out_w = shortcut.get_shape().as_list()
     else:
       _, out_h, out_w, _ = shortcut.get_shape().as_list()
@@ -316,14 +316,16 @@ def high_resolution_module(inputs, num_branches, num_inchannels,
             kernel_size=1, strides=1, data_format=data_format)
           input_branch = batch_norm(input_branch, training, data_format)
           input_branch = tf.nn.relu(input_branch)
-          if data_format == 'channel_first':
+          if data_format == 'channels_first':
             input_branch = tf.transpose(input_branch, perm=[0, 2, 3, 1])
-            input_branch = tf.image.resize(input_branch, (out_h, out_w),
-                                           method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+            input_branch = tf.image.resize_images(
+                input_branch, (out_h, out_w), 
+                method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
             input_branch = tf.transpose(input_branch, perm=[0, 3, 1, 2])
           else:
-            input_branch = tf.image.resize(input_branch, (out_h, out_w),
-                                           method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+            input_branch = tf.image.resize_images(
+                input_branch, (out_h, out_w), 
+                method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
         elif ind == out_index:
           continue
         else:

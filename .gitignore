@@ -3,6 +3,7 @@
 .vscode
 
 # data & result dir
-__pycache__/
 dataset/
 checkpoints/
+
+__pycache__/
