@@ -39,8 +39,6 @@ NUM_IMAGES = {
 _NUM_TRAIN_FILES = 1024
 _SHUFFLE_BUFFER = 10000
 
-DATASET_NAME = 'ImageNet'
-
 
 def get_filenames(is_training, data_dir):
   """Return filenames for dataset."""
@@ -303,16 +301,19 @@ def input_fn(is_training,
 class ImagenetModel(hrnet_model.Model):
   """Model class with appropriate defaults for Imagenet data."""
 
-  def __init__(self, hrnet_size, data_format=None, num_classes=NUM_CLASSES):
+  def __init__(self, hrnet_size, 
+               data_format=None, 
+               num_classes=NUM_CLASSES, 
+               dtype=tf.float32):
     """These are the parameters that work for Imagenet data.
 
     Args:
       hrnet_size: The number of convolutional layers needed in the model.
       data_format: Either 'channels_first' or 'channels_last', specifying which
-      data format to use when setting up the model.
+        data format to use when setting up the model.
       num_classes: The number of output classes needed from the model. This
-      enables users to extend the same model to their own datasets.
-      dtype: The TensorFlow dtype to use for calculations.
+        enables users to extend the same model to their own datasets.
+      dtype: The Tensorflow dtype to use for calculations.
     """
     super(ImagenetModel, self).__init__(
       hrnet_size=hrnet_size,
@@ -335,22 +336,22 @@ def learning_rate_with_decay(batch_size, batch_denom, num_images,
   """Get a learning rate that decays step-wise as training progresses.
 
   Args:
-  batch_size: the number of examples processed in each training batch.
-  batch_denom: this value will be used to scale the base learning rate.
-    `0.1 * batch size` is divided by this number, such that when
-    batch_denom == batch_size, the initial learning rate will be 0.1.
-  num_images: total number of images that will be used for training.
-  boundary_epochs: list of ints representing the epochs at which we
-    decay the learning rate.
-  decay_rates: list of floats representing the decay rates to be used
-    for scaling the learning rate. It should have one more element
-    than `boundary_epochs`, and all elements should have the same type.
-  base_lr: Initial learning rate scaled based on batch_denom.
-  warmup: Run a 5 epoch warmup to the initial lr.
+    batch_size: the number of examples processed in each training batch.
+    batch_denom: this value will be used to scale the base learning rate.
+      `0.1 * batch size` is divided by this number, such that when
+      batch_denom == batch_size, the initial learning rate will be 0.1.
+    num_images: total number of images that will be used for training.
+    boundary_epochs: list of ints representing the epochs at which we
+      decay the learning rate.
+    decay_rates: list of floats representing the decay rates to be used
+      for scaling the learning rate. It should have one more element
+      than `boundary_epochs`, and all elements should have the same type.
+    base_lr: Initial learning rate scaled based on batch_denom.
+    warmup: Run a 5 epoch warmup to the initial lr.
   Returns:
-  Returns a function that takes a single argument - the number of batches
-  trained so far (global_step)- and returns the learning rate to be used
-  for training the next batch.
+    Returns a function that takes a single argument - the number of batches
+    trained so far (global_step)- and returns the learning rate to be used
+    for training the next batch.
   """
   initial_learning_rate = base_lr * batch_size / batch_denom
   batches_per_epoch = num_images / batch_size
@@ -421,7 +422,7 @@ def hrnet_model_fn(features, labels, mode, model_class,
   # Checks that features/images have same data type being used for calculations.
   assert features.dtype == dtype
 
-  model = model_class(hrnet_size, data_format)
+  model = model_class(hrnet_size, data_format, dtype=dtype)
   logits = model(features, mode == tf.estimator.ModeKeys.TRAIN)
 
   # This acts as a no-op if the logits are already in fp32 (provided logits are
