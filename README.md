@@ -10,6 +10,4 @@
 
 # ImageNet Pre-trained Models
 
-* [HRNet-W18]() (Top-1 Accuracy: , Top-5 Accuracy: )
-* [HRNet-W32]() (Top-1 Accuracy: , Top-5 Accuracy: )
-* [HRNet-W48]() (Top-1 Accuracy: , Top-5 Accuracy: )
+* [HRNet-W32]() (Top-1 Accuracy: 77.0%, Top-5 Accuracy: 93.5%)

@@ -526,8 +526,8 @@ def imagenet_model_fn(features, labels, mode, params):
   learning_rate_fn = learning_rate_with_decay(
     batch_size=params['batch_size'] * params.get('num_workers', 1),
     batch_denom=256, num_images=NUM_IMAGES['train'],
-    boundary_epochs=[30, 60, 80, 90], decay_rates=[1, 0.1, 0.01, 0.001, 1e-4],
-    warmup=True, base_lr=.128)
+    boundary_epochs=[30, 60, 90], decay_rates=[1, 0.1, 0.01, 0.001],
+    warmup=True, base_lr=0.05)
 
   return hrnet_model_fn(
     features=features,
@@ -567,6 +567,7 @@ def hrnet_main(model_function, input_function):
     inter_op_parallelism_threads=FLAGS.inter_op_parallelism_threads,
     intra_op_parallelism_threads=FLAGS.intra_op_parallelism_threads,
     allow_soft_placement=True)
+  session_config.gpu_options.allow_growth = True
 
   distribution_strategy = distribution_utils.get_distribution_strategy(
     distribution_strategy=FLAGS.distribution_strategy,
@@ -627,7 +628,8 @@ def hrnet_main(model_function, input_function):
 
   if FLAGS.eval_only or not FLAGS.train_epochs:
     tf.compat.v1.logging.info('Starting to evaluate.')
-    eval_results = classifier.evaluate(input_fn=input_fn_eval)
+    eval_results = classifier.evaluate(input_fn=input_fn_eval, 
+      checkpoint_path=FLAGS.pretrained_model_checkpoint_path)
 
     # TODO: put it into logs
     print(eval_results)
@@ -756,4 +758,4 @@ if __name__ == "__main__":
     help="Skip training and only perform evaluation on "
          "the latest checkpoint.")
 
-  tf.app.run(hrnet_main(imagenet_model_fn, input_fn))
+  hrnet_main(imagenet_model_fn, input_fn)
