@@ -327,6 +327,7 @@ class ImagenetModel(hrnet_model.Model):
       base_channel=128,
       final_conv_channel=2048,
       data_format=data_format,
+      dtype=dtype
     )
 
 
