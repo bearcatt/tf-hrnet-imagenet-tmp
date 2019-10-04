@@ -3,6 +3,7 @@
 .vscode
 
 # data & result dir
+dataset
 dataset/
 checkpoints/
 
