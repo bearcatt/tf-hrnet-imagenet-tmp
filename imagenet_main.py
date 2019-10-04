@@ -527,8 +527,8 @@ def imagenet_model_fn(features, labels, mode, params):
   learning_rate_fn = learning_rate_with_decay(
     batch_size=params['batch_size'] * params.get('num_workers', 1),
     batch_denom=256, num_images=NUM_IMAGES['train'],
-    boundary_epochs=[30, 60, 90], decay_rates=[1, 0.1, 0.01, 0.001],
-    warmup=True, base_lr=0.05)
+    boundary_epochs=[30, 70, 100], decay_rates=[1, 0.1, 0.01, 0.001],
+    warmup=True, base_lr=0.1)
 
   return hrnet_model_fn(
     features=features,
@@ -745,7 +745,7 @@ if __name__ == "__main__":
            "tf.train.experimental.enable_mixed_precision_graph_rewrite will "
            "be used to automatically use fp16 without any manual casts.")
   tf.flags.DEFINE_integer(
-    name="train_epochs", short_name="te", default=100,
+    name="train_epochs", short_name="te", default=110,
     help="The number of epochs used to train.")
   tf.flags.DEFINE_string(
     name="data_dir", short_name="dd", default="dataset",
